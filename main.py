@@ -36,7 +36,7 @@ if ARGS.run_mode == 'train':
             train_loss.backward()
             optimizer.step()
             optimizer.optimizer.zero_grad()
-            print(f'{iter_cnt}-train_loss: {train_loss.item()}')
+            print(f'{iter_cnt} - train_loss: {train_loss.item()}')
 
             if iter_cnt % ARGS.eval_steps == 0:
                 model.eval()
