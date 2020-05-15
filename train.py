@@ -15,6 +15,7 @@ def run_epoch(train_iter, val_iter, model, criterion, opt, pad_idx, iter_cnt):
         train_loss.backward()
         opt.step()
         opt.optimizer.zero_grad()
+        print(f'{iter_cnt} - train_loss: {train_loss.item()}')
 
         if iter_cnt % ARGS.eval_steps == 0:
             model.eval()
