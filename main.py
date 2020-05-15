@@ -38,24 +38,26 @@ if ARGS.run_mode == 'train':
             optimizer.step()
             optimizer.optimizer.zero_grad()
 
+            print(iter_cnt)
             if iter_cnt % ARGS.eval_steps == 0:
                 model.eval()
                 val_total_loss = 0
                 val_ntokens = 0
-                for val_batch in val_iter:
-                    val_batch = utils.rebatch(pad_idx, val_batch)
-                    val_out = model(val_batch.src, val_batch.trg, val_batch.src_mask, val_batch.trg_mask)
-                    val_loss = criterion(val_out.contiguous().view(-1, val_out.size(-1)), val_batch.trg_y.contiguous().view(-1)) / val_batch.ntokens
+                with torch.no_grad():
+                    for val_batch in val_iter:
+                        val_batch = utils.rebatch(pad_idx, val_batch)
+                        val_out = model(val_batch.src, val_batch.trg, val_batch.src_mask, val_batch.trg_mask)
+                        val_loss = criterion(val_out.contiguous().view(-1, val_out.size(-1)), val_batch.trg_y.contiguous().view(-1)) / val_batch.ntokens
 
-                    val_total_loss += val_loss.item()
-                    val_ntokens += val_batch.ntokens
+                        val_total_loss += val_loss.item()
+                        val_ntokens += val_batch.ntokens
 
-                val_loss = val_total_loss / val_ntokens.float()
-                min_val_loss = min(min_val_loss, val_loss)
-                wandb.log({'Train Loss': train_loss.item() / train_batch.ntokens.float(),
-                           'Val Loss': val_loss,
-                           'Min Val Loss': min_val_loss}, step=iter_cnt)
-                model.train()
+                    val_loss = val_total_loss / val_ntokens.float()
+                    min_val_loss = min(min_val_loss, val_loss)
+                    wandb.log({'Train Loss': train_loss.item() / train_batch.ntokens.float(),
+                               'Val Loss': val_loss,
+                               'Min Val Loss': min_val_loss}, step=iter_cnt)
+                    model.train()
 
             iter_cnt += 1
 

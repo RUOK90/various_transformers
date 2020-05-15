@@ -45,7 +45,7 @@ def make_arg_parser():
     train_args.add_argument('--random_seed', type=int, default=1234)
     train_args.add_argument('--n_epochs', type=int, default=1000)
     train_args.add_argument('--batch_size', type=int, default=32)
-    train_args.add_argument('--eval_steps', type=int, default=1000)
+    train_args.add_argument('--eval_steps', type=int, default=10)
     train_args.add_argument('--max_len', type=int, default=100)
     train_args.add_argument('--min_freq', type=int, default=2)
 
@@ -86,6 +86,7 @@ def get_args():
 
     if args.debug_mode:
         args.data_path = '.data_debug'
+    else:
         wandb.init(project=args.project, name=args.name, tags=args.tags, config=args)
 
     return args, parser
