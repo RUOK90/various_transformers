@@ -25,7 +25,8 @@ criterion = LabelSmoothing(size=len(TGT.vocab), padding_idx=pad_idx, smoothing=0
 if ARGS.run_mode == 'train':
     optimizer = NoamOpt(ARGS.d_model, 1, 2000, torch.optim.Adam(model.parameters(), lr=0, betas=(0.9, 0.98), eps=1e-9))
     iter_cnt = 1
-    min_val_loss = 1e9
+    min_val_loss = float('inf')
+    min_norm_val_loss = float('inf')
     model.train()
     for epoch in range(ARGS.n_epochs):
         for train_batch in train_iter:
@@ -51,11 +52,15 @@ if ARGS.run_mode == 'train':
                         val_total_loss += val_loss.item()
                         val_ntokens += val_batch.ntokens
 
-                    val_loss = val_total_loss / val_ntokens.float()
-                    min_val_loss = min(min_val_loss, val_loss)
+                    norm_val_loss = val_total_loss / val_ntokens.float()
+                    min_val_loss = min(min_val_loss, val_total_loss)
+                    min_norm_val_loss = min(min_norm_val_loss, norm_val_loss)
                     wandb.log({'Train Loss': train_loss.item() / train_batch.ntokens.float(),
-                               'Val Loss': val_loss,
-                               'Min Val Loss': min_val_loss}, step=iter_cnt)
+                               'Val Total Loss': val_total_loss,
+                               'Norm Val Loss': norm_val_loss,
+                               'Min Val Total Loss': min_val_loss,
+                               'Min Norm Val Loss': min_norm_val_loss,
+                               }, step=iter_cnt)
                     model.train()
 
             iter_cnt += 1

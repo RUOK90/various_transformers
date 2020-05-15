@@ -31,7 +31,7 @@ def make_arg_parser():
     base_args = parser.add_argument_group('Base args')
     base_args.add_argument('--run_script')
     base_args.add_argument('--gpu', type=int, default=3)
-    base_args.add_argument('--debug_mode', type=str2bool, default=0)
+    base_args.add_argument('--debug_mode', type=str2bool, default=1)
     base_args.add_argument('--run_mode', type=str, default='train')
     base_args.add_argument('--data_path', type=str, default='/shared/tf_data')
     base_args.add_argument('--machine_name', type=str)
@@ -86,8 +86,8 @@ def get_args():
 
     if args.debug_mode:
         args.data_path = '.data_debug'
-    else:
-        wandb.init(project=args.project, name=args.name, tags=args.tags, config=args)
+
+    wandb.init(project=args.project, name=args.name, tags=args.tags, config=args)
 
     return args, parser
 
