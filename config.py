@@ -34,6 +34,7 @@ def make_arg_parser():
     base_args.add_argument('--debug_mode', type=str2bool, default=0)
     base_args.add_argument('--run_mode', type=str, default='train')
     base_args.add_argument('--data_path', type=str, default='/shared/tf_data')
+    base_args.add_argument('--machine_name', type=str)
 
     wandb_args = parser.add_argument_group('wandb args')
     wandb_args.add_argument('--project', type=str, default='efficient_transformer')
