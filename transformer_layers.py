@@ -166,7 +166,7 @@ def get_normalized_attention(attn_norm, scores):
 
 
 def get_sparse_scores(sparse_mode, sparsity_top_k, scores):
-    if sparse_mode == 'top-k':
+    if sparse_mode == 'topk':
         k = min(sparsity_top_k, scores.size(-1))
         topk, indices = scores.topk(k, dim=-1)
         neg_infs = torch.ones_like(scores) * -1e9
@@ -204,7 +204,7 @@ class MultiHeadedAttention(nn.Module):
             self.linears = clones(nn.Linear(d_model, d_model), 2)
             self.r = Parameter(torch.Tensor(self.h, max_len, max_len))
 
-        elif self.attn_type == 'dense+random':
+        elif self.attn_type == 'dense_random':
             self.linears = clones(nn.Linear(d_model, d_model), 3)
             self.w = nn.Linear(d_model, max_len * h)
             self.r = Parameter(torch.Tensor(self.h, max_len, max_len))
@@ -245,7 +245,7 @@ class MultiHeadedAttention(nn.Module):
                 scores = scores.masked_fill(mask == 0, -1e9)
             p_attn = get_normalized_attention(self.attn_norm, scores)
 
-        elif self.attn_type == 'dense+random':
+        elif self.attn_type == 'dense_random':
             query, value = [l(x) for l, x in zip(self.linears, (query, value))]
             value = value.view(nbatches, self.h, seq_len, self.d_k)
             dense_scores = self.w(F.relu(query)).view(nbatches, self.h, seq_len, self.max_len)[:, :, :, :seq_len]

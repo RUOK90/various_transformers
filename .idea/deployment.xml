@@ -5,7 +5,7 @@
       <paths name="gpu4">
         <serverdata>
           <mappings>
-            <mapping deploy="/root/various_transformer" local="$PROJECT_DIR$" web="/" />
+            <mapping deploy="/root/remote_codes" local="$PROJECT_DIR$" web="/" />
           </mappings>
         </serverdata>
       </paths>
