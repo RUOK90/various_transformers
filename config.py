@@ -37,6 +37,7 @@ def make_arg_parser():
     base_args.add_argument('--machine_name', type=str)
 
     wandb_args = parser.add_argument_group('wandb args')
+    wandb_args.add_argument('--wandb', type=str2bool, default=0)
     wandb_args.add_argument('--project', type=str, default='efficient_transformer')
     wandb_args.add_argument('--name', type=str, default='test')
     wandb_args.add_argument('--tags')
@@ -87,7 +88,8 @@ def get_args():
     if args.debug_mode:
         args.data_path = '.data_debug'
 
-    wandb.init(project=args.project, name=args.name, tags=args.tags, config=args)
+    if args.wandb:
+        wandb.init(project=args.project, name=args.name, tags=args.tags, config=args)
 
     return args, parser
 
