@@ -144,7 +144,7 @@ class DecoderLayer(nn.Module):
         return self.sublayer[2](x, self.feed_forward)
 
 
-def attention(query, key, value, mask, dropout, attn_type, attn_norm):
+def attention(query, key, value, mask, dropout):
     "Compute 'Scaled Dot Product Attention'"
     d_k = query.size(-1)
     scores = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(d_k)
@@ -165,20 +165,54 @@ def get_normalized_attention(attn_norm, scores):
         return F.sigmoid(scores)
 
 
-def get_sparse_scores(sparse_mode, sparsity_top_k, scores):
-    if sparse_mode == 'topk':
+def get_sparse_scores(sparsity_mode, sparsity_top_k, scores):
+    if sparsity_mode == 'topk':
         k = min(sparsity_top_k, scores.size(-1))
         topk, indices = scores.topk(k, dim=-1)
         neg_infs = torch.ones_like(scores) * -1e9
         scores = neg_infs.scatter(-1, indices, topk)
         return scores
 
-    elif sparse_mode is None:
+    elif sparsity_mode == 'none':
         return scores
 
 
+class _MultiHeadedAttention(nn.Module):
+    def __init__(self, h, d_model, dropout=0.1):
+        "Take in model size and number of heads."
+        super(MultiHeadedAttention, self).__init__()
+        assert d_model % h == 0
+        # We assume d_v always equals d_k
+        self.d_k = d_model // h
+        self.h = h
+        self.linears = clones(nn.Linear(d_model, d_model), 4)
+        self.attn = None
+        self.dropout = nn.Dropout(p=dropout)
+
+    def forward(self, query, key, value, mask=None):
+        "Implements Figure 2"
+        if mask is not None:
+            # Same mask applied to all h heads.
+            mask = mask.unsqueeze(1)
+        nbatches = query.size(0)
+
+        # 1) Do all the linear projections in batch from d_model => h x d_k
+        query, key, value = \
+            [l(x).view(nbatches, -1, self.h, self.d_k).transpose(1, 2)
+             for l, x in zip(self.linears, (query, key, value))]
+
+        # 2) Apply attention on all the projected vectors in batch.
+        x, self.attn = attention(query, key, value, mask=mask,
+                                 dropout=self.dropout)
+
+        # 3) "Concat" using a view and apply a final linear.
+        x = x.transpose(1, 2).contiguous() \
+            .view(nbatches, -1, self.h * self.d_k)
+        return self.linears[-1](x)
+
+
 class MultiHeadedAttention(nn.Module):
-    def __init__(self, h, d_model, dropout, attn_type='vanilla', attn_norm=None, max_len=None, sparsity_mode=None, sparsity_top_k=None):
+    def __init__(self, h, d_model, dropout, attn_type='vanilla', attn_norm=None, max_len=None, sparsity_mode='none', sparsity_top_k=None):
         "Take in model size and number of heads."
         super(MultiHeadedAttention, self).__init__()
         assert d_model % h == 0

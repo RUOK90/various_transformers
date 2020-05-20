@@ -41,3 +41,7 @@ class Transformer(nn.Module):
         model_output = self.generator(decoder_output)
 
         return model_output
+
+
+def get_model(pt_path):
+    return torch.load(pt_path)

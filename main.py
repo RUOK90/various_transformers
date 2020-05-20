@@ -3,14 +3,16 @@ import spacy
 import numpy as np
 import torch
 import dataset
-from models import Transformer
+from models import Transformer, get_model
 from utils import LabelSmoothing, NoamOpt, MyIterator
+from transformer_layers import *
 import utils
 import wandb
+import math
 
 
 # dataset
-SRC, TGT, train, val, test, pad_idx = dataset.get_dataset()
+SRC, TGT, train, val, test, pad_idx = dataset.get_dataset(ARGS.dataset)
 train_iter = MyIterator(train, batch_size=ARGS.batch_size, device=ARGS.device, repeat=False, sort_key=lambda x: (len(x.src), len(x.trg)), batch_size_fn=utils.batch_size_fn, train=True)
 val_iter = MyIterator(val, batch_size=ARGS.batch_size, device=ARGS.device, repeat=False, sort_key=lambda x: (len(x.src), len(x.trg)), batch_size_fn=utils.batch_size_fn, train=False)
 print('Done get dataset')
@@ -25,7 +27,7 @@ criterion = LabelSmoothing(size=len(TGT.vocab), padding_idx=pad_idx, smoothing=0
 if ARGS.run_mode == 'train':
     optimizer = NoamOpt(ARGS.d_model, 1, 2000, torch.optim.Adam(model.parameters(), lr=0, betas=(0.9, 0.98), eps=1e-9))
     iter_cnt = 1
-    min_norm_val_loss = float('inf')
+    min_norm_val_loss = math.inf
     model.train()
     for epoch in range(ARGS.n_epochs):
         for train_batch in train_iter:
@@ -64,7 +66,30 @@ if ARGS.run_mode == 'train':
 
             iter_cnt += 1
 
-
 # eval
 elif ARGS.run_mode == 'eval':
-    model = torch.load("iwslt.pt").to(ARGS.device)
+    model = get_model('iwslt.pt').to(ARGS.device)
+    with torch.no_grad():
+        for i, batch in enumerate(train_iter):
+            src = batch.src.transpose(0, 1)[:2]
+            # src = batch.src.transpose(0, 1)
+            src_mask = (src != SRC.vocab.stoi["<blank>"]).unsqueeze(-2)
+            # out = utils.greedy_decode(model, src, src_mask, max_len=60, start_symbol=TGT.vocab.stoi["<s>"])
+            out = utils.beam_search_decode(model, src, SRC.vocab, TGT.vocab)
+            print("Translation:", end="\t")
+            for i in range(1, out.size(1)):
+                # sym = TGT.vocab.itos[out[0, i]]
+                sym = out[0, i].item()
+                # if sym == "</s>": break
+                if sym == 3: break
+                print(sym, end=" ")
+            print()
+            print("Target:", end="\t")
+            for i in range(1, batch.trg.size(0)):
+                # sym = TGT.vocab.itos[batch.trg.data[i, 0]]
+                sym = batch.trg.data[i, 0].item()
+                # if sym == "</s>": break
+                if sym == 3: break
+                print(sym, end=" ")
+            print()
+            break

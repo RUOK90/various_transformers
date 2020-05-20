@@ -4,6 +4,8 @@ from torch.autograd import Variable
 from torchtext import data, datasets
 import time
 import numpy as np
+from config import *
+import math
 
 
 class LabelSmoothing(nn.Module):
@@ -11,8 +13,8 @@ class LabelSmoothing(nn.Module):
 
     def __init__(self, size, padding_idx, smoothing=0.0):
         super(LabelSmoothing, self).__init__()
-        # self.criterion = nn.KLDivLoss(reduction='none')
-        self.criterion = nn.KLDivLoss(size_average=False)
+        self.criterion = nn.KLDivLoss(reduction='sum')
+        # self.criterion = nn.KLDivLoss(size_average=False)
         self.padding_idx = padding_idx
         self.confidence = 1.0 - smoothing
         self.smoothing = smoothing
@@ -144,12 +146,180 @@ def greedy_decode(model, src, src_mask, max_len, start_symbol):
     memory = model.encode(src, src_mask)
     ys = torch.ones(1, 1).fill_(start_symbol).type_as(src.data)
     for i in range(max_len - 1):
-        out = model.decode(memory, src_mask,
-                           Variable(ys),
-                           Variable(subsequent_mask(ys.size(1))
-                                    .type_as(src.data)))
+        out = model.decode(memory, src_mask, Variable(ys), Variable(subsequent_mask(ys.size(1)).type_as(src.data)))
         prob = model.generator(out[:, -1])
         _, next_word = torch.max(prob, dim=1)
         next_word = next_word.data[0]
         ys = torch.cat([ys, torch.ones(1, 1).type_as(src.data).fill_(next_word)], dim=1)
     return ys
+
+
+class BeamSearchNode(object):
+    def __init__(self, prev_node, word_idx, cum_log_prob, length, stop):
+        self.prev_node = prev_node
+        self.word_idx = word_idx
+        self.cum_log_prob = cum_log_prob
+        self.length = length
+        self.stop = stop
+        # self.score = score
+
+    # def eval(self, alpha=1.0):
+    #     reward = 0
+    #     # Add here a function for shaping a reward
+    #
+    #     return self.logp / float(self.leng - 1 + 1e-6) + alpha * reward
+
+
+def get_word_idx_seqs_from_beam_search_nodes(beam_search_nodes):
+    batch_list = []
+    batch_size = len(beam_search_nodes)
+    beam_size = len(beam_search_nodes[0])
+
+    for sample_idx in range(batch_size):
+        beam_list = []
+        for beam_idx in range(beam_size):
+            word_idx_seq = []
+            cur_node = beam_search_nodes[sample_idx][beam_idx]
+            word_idx_seq.append(cur_node.word_idx)
+            while cur_node.prev_node is not None:
+                cur_node = cur_node.prev_node
+                word_idx_seq.insert(0, cur_node.word_idx)
+            beam_list.append(word_idx_seq)
+        batch_list.append(beam_list)
+
+    return torch.Tensor(batch_list)
+
+
+def get_cum_log_probs_from_beam_search_nodes(beam_search_nodes):
+    batch_list = []
+    batch_size = len(beam_search_nodes)
+    beam_size = len(beam_search_nodes[0])
+
+    for sample_idx in range(batch_size):
+        beam_list = []
+        for beam_idx in range(beam_size):
+            cur_node = beam_search_nodes[sample_idx][beam_idx]
+            beam_list.append(cur_node.cum_log_prob)
+        batch_list.append(beam_list)
+
+    return torch.Tensor(batch_list)
+
+
+def get_length_from_beam_search_nodes(beam_search_nodes):
+    batch_list = []
+    batch_size = len(beam_search_nodes)
+    beam_size = len(beam_search_nodes[0])
+
+    for sample_idx in range(batch_size):
+        beam_list = []
+        for beam_idx in range(beam_size):
+            cur_node = beam_search_nodes[sample_idx][beam_idx]
+            beam_list.append(cur_node.length)
+        batch_list.append(beam_list)
+
+    return torch.Tensor(batch_list)
+
+
+def get_length_penalty(length, alpha):
+    return ((5 + length) ** alpha) / ((5 + 1) ** alpha)
+
+
+def beam_search_decode(model, src, src_vocab, tgt_vocab):
+    src_mask = (src != src_vocab.stoi[BLANK_WORD]).unsqueeze(-2)
+    start_symbol = tgt_vocab.stoi[BOS_WORD]
+    batch_size, src_max_len = src.size()
+    decode_max_len = src_max_len + ARGS.decode_max_len_add
+
+    memory = model.encode(src, src_mask)
+    beam_search_nodes = [[BeamSearchNode(None, start_symbol, 0, 0, False) for j in range(ARGS.beam_size)] for i in range(batch_size)]
+
+    for len_idx in range(decode_max_len):
+        cum_log_probs_cand = []
+        word_idxs_cand = []
+        prev_cum_log_probs = get_cum_log_probs_from_beam_search_nodes(beam_search_nodes).to(ARGS.device)
+        length = (get_length_from_beam_search_nodes(beam_search_nodes) + 1).to(ARGS.device)
+        word_idx_seqs = get_word_idx_seqs_from_beam_search_nodes(beam_search_nodes).type_as(src.data)
+
+        for beam_idx in range(ARGS.beam_size):
+            out = model.decode(memory, src_mask, word_idx_seqs[:, beam_idx], subsequent_mask(word_idx_seqs.size(-1)).type_as(src.data))
+            log_probs = model.generator(out[:, -1])
+            topk_log_probs, topk_words = log_probs.topk(ARGS.beam_size, dim=-1)
+
+            if len_idx == 0:
+                stop_cnt = 0
+                for sample_idx in range(batch_size):
+                    for beam_idx in range(ARGS.beam_size):
+                        prev_node = beam_search_nodes[sample_idx][beam_idx]
+                        word_idx = topk_words[sample_idx][beam_idx]
+                        if word_idx == tgt_vocab.stoi[EOS_WORD] or prev_node.stop:
+                            stop = True
+                            stop_cnt += 1
+                            word_idx = tgt_vocab.stoi[EOS_WORD]
+                            length = prev_node.length
+                        else:
+                            stop = False
+                            length = prev_node.length + 1
+                        cum_log_prob = topk_log_probs[sample_idx, beam_idx]
+                        new_node = BeamSearchNode(prev_node, word_idx, cum_log_prob, length, stop)
+                        beam_search_nodes[sample_idx][beam_idx] = new_node
+                break
+            else:
+                cum_log_probs = topk_log_probs + prev_cum_log_probs
+                cum_log_probs_cand.append(cum_log_probs)
+                word_idxs_cand.append(topk_words)
+
+        if len_idx != 0:
+            cum_log_probs_cand = torch.cat(cum_log_probs_cand, dim=-1)
+            word_idxs_cand = torch.cat(word_idxs_cand, dim=-1)
+            modifier = get_length_penalty(length, ARGS.length_penalty)
+            scores_cand = cum_log_probs_cand / modifier
+            topk_scores, topk_scores_idxs = scores_cand.topk(ARGS.beam_size, dim=-1)
+            beam_mapping_idxs = (topk_scores_idxs // ARGS.beam_size).long()
+
+            stop_cnt = 0
+            node_cache = []
+            for sample_idx in range(batch_size):
+                for beam_idx in range(ARGS.beam_size):
+                    prev_node = beam_search_nodes[sample_idx][beam_mapping_idxs[sample_idx][beam_idx]]
+                    word_idx = word_idxs_cand[sample_idx][topk_scores_idxs[sample_idx][beam_idx]]
+                    if word_idx == tgt_vocab.stoi[EOS_WORD] or prev_node.stop:
+                        stop = True
+                        stop_cnt += 1
+                        word_idx = tgt_vocab.stoi[EOS_WORD]
+                        length = prev_node.length
+                    else:
+                        stop = False
+                        length = prev_node.length + 1
+                    score = topk_scores[sample_idx][beam_idx]
+                    new_node = BeamSearchNode(prev_node, word_idx, cum_log_prob, length, stop)
+                    node_cache.append([sample_idx, beam_idx, new_node])
+
+            for sample_idx, beam_idx, new_node in node_cache:
+                beam_search_nodes[sample_idx][beam_idx] = new_node
+
+        if stop_cnt == batch_size * ARGS.beam_size:
+            break
+
+    # choose the best one
+    output_seqs = get_word_idx_seqs_from_beam_search_nodes(beam_search_nodes)
+    max_score = -math.inf
+    for sample_idx in range(batch_size):
+        for beam_idx in range(ARGS.beam_size):
+            node = beam_search_nodes[sample_idx][beam_idx]
+            length = node.length
+            log_prob = node.cum_log_prob
+            # length penalty
+            modifier = (((5 + length) ** ARGS.length_penalty) / ((5 + 1) ** ARGS.length_penalty))
+            score = log_prob / modifier
+
+            if score > max_score:
+                max_score = score
+                output_seq = output_seqs[sample_idx][beam_idx]
+
+    return result
+
+
+
+
+
+
